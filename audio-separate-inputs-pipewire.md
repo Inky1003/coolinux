@@ -1,22 +1,12 @@
-# How to separate two inputs in Analog Stereo Audio?
+# How to separate two inputs in Analog Stereo Audio (for Pipewire users)?
 
-Okay... first of all: when Pulseaudio starts, It loads `/etc/pulse/default.pa` which says "detect the cards automatically for me and map them.". And then that's done, but wrong way (at least in my case).
-
-When there are 2 inputs, you MUST SEPARATE, IT DOESN'T MATTER IF THEY ARE THE SAME CARD. That's what the automatic detection doesn't does.
-
-So what we need to do is basically set something to stop this detection, and set ourselves what we want.
-
-If you're not familiar with terminals, and etc., don't worry, I'll explain every command I do.
-
-### Pipewire users:
-
-[Click here. The guide on this link works for Pipewire](audio-separate-inputs-pipewire.md)
+Pipewire works with other files which not the Pulseaudio ones, as everyone should note, but It uses the same automated system which Pulseaudio uses, so 
 
 ## Requirements
 
 - A terminal
 - A text editor
-- Pulseaudio
+- Pipewire
 
 ## Step 1 - copy the pulse configuration file and get some information
 
@@ -25,10 +15,10 @@ If you're not familiar with terminals, and etc., don't worry, I'll explain every
 Open your terminal and copy the file to your home location with
 
 ```bash
-cp /etc/pulse/default.pa ~/.config/pulse/default.pa
+cp /etc/pipewire/pipewire.conf ~/.config/pipewire/pipewire.conf && cp /pipewire/media-session.d/media-session.conf 
 ```
 
-The copied file will override the original one on the next PulseAudio launch.
+The copied file will override the original one on the next Pipewire launch.
 
 ### Getting information
 
@@ -135,83 +125,85 @@ And also, ignore the monitor ones
 
 **Important!** DON'T FORGET to name the output rates names. We have both input and output with same sample rate, but Imagine they don't. 
 
-## Step 2 - Configure the modules again.
+## Step 2 - Configure Pipewire
 
-Search in the copied file (`~/.config/pulse/default.pa`) for `### Load audio drivers statically`
+### Enabling those devices
 
-This part is commented with #, so It does not run. What we need is to put something like this (the next example is in my case):
+Open `~/.config/pipewire/pipewire.conf`
 
-```bash
-### Load audio drivers statically
-### (it's probably better to not load these drivers manually, but instead
-### use module-udev-detect -- see below -- for doing this automatically)
-load-module module-alsa-sink device=hw:PCH,0 sink_name=sound_output 
-update-sink-proplist sound_output device.description="Sound Output"
+With the PCH card that does have the 0 playback device and the 0 and 2 recording devices, we should make a new Pipewire adapter for them, using ALSA pcm sinks/sources.
 
-load-module module-alsa-source device=hw:PCH,0 source_name=input1 rate=44100
-update-source-proplist input1 device.description="Input One"
+Search for a line like this:
 
-load-module module-alsa-source device=hw:PCH,2 source_name=input2 rate=44100
-update-source-proplist input2 device.description="Input Two"
+```yaml
+context.objects = {
+    #<factory-name> = {
+    #    [ args  = { <key> = <value> ... } ]
+    #    [ flags = [ [ nofail ] ]
+    #}
+# [...]
+}
 ```
 
-okay, I think It's way too fuzzy at a first view, but let's explain what's happening.
+Then add these lines after the first opening brace `{` :
 
-```bash
-load-module module-alsa-sink device=hw:PCH,0 sink_name=sound_output
-# on this first line we are loading the 'module-alsa-sink' module to create a sink which takes the card named PCH, playback device 0 as the Playback device. Then we put the new sink name (not yet the display name) and voila! We have a new output!
-update-sink-proplist sound_output device.description="Sound Output"
-# on this other line we just set the sink display name as "Sound Output" :)
-
-load-module module-alsa-source device=hw:PCH,0 source_name=input1 rate=44100
-# again, here we load another module, 'module-alsa-source' which creates a source that takes the card named PCH, capture device 0 as the Capture device, and setting the sample rate as 44100. Then we put again a name (which is not the display name). Now we have a new input!
-update-source-proplist input1 device.description="Input One"
-# on this other line we just set the sink display name as "Input One" :)
+```yaml
+context.objects = {
+	adapter = {		# This Creates a new adapter
+        args = {	# With those arguments:
+            factory.name    = api.alsa.pcm.sink			# This is an ALSA pcm sink
+            node.name       = sound-output				# Named "sound-output"
+            node.description        = "Sound Output"	# Which the user can find It by "Sound Output"
+            media.class             = Audio/Sink		# This tells pipewire that this is a Sink
+            api.alsa.path           = "hw:PCH,0"		# And finally the ALSA device number and card name
+        }
+    }
+    adapter = {
+        args = {
+            factory.name    = api.alsa.pcm.source		# This is an ALSA pcm source
+            node.name       = input-1					# Named "input-1"
+            node.description        = "Input 1"			# Which the user can find It by "Input 1"
+            media.class             = Audio/Source		# This tells pipewire that this is a Source
+            api.alsa.path           = "hw:PCH,0"		# And finally the ALSA device number and card name
+        }
+    }
+    adapter = {
+        args = {
+            factory.name    = api.alsa.pcm.source		# The next lines are the same as above.
+            node.name       = input-2
+            node.description        = "Input 2"
+            media.class             = Audio/Source
+            api.alsa.path           = "hw:PCH,2"
+        }
+    }
+}
 ```
 
-Then search for lines like this:
+The parts after the # on this part are added by be to explain what is happening.
 
-```bash
-### Automatically load driver modules depending on the hardware available
-.ifexists module-udev-detect.so
-load-module module-udev-detect
-.else
-### Use the static hardware detection module (for systems that lack udev support)
-load-module module-detect
-.endif
+### Disabling auto detection
+
+Open `~/.config/pipewire/media-session.d/`
+
+Then we disable auto detection as It would disable our newly created adapters.
+
+Search for this:
+
+```
+	alsa-monitor
 ```
 
-And put them like this:
+and then comment It with #
 
-```bash
-### Automatically load driver modules depending on the hardware available
-#.ifexists module-udev-detect.so
-#load-module module-udev-detect
-#.else
-### Use the static hardware detection module (for systems that lack udev support)
-#load-module module-detect
-#.endif
+```yaml
+	# alsa-monitor
 ```
 
-## Step 3 - Restart the daemon
-
-If everything go fine, when restarting the daemon you should have either audio or no inputs working at all, but at least output audio. All your opened applications should have no sound for now, and you may need to restart them.
-
-To restart It:
-
-```bash
-pulseaudio -k
-# If your Pulseaudio don't start again, do:
-pulseaudio -D
-```
-
-Then we need to mess with alsamixer.
-
-## Step 4 - alsamixer for adjusting everything
+## Step 3 - alsamixer for adjusting everything
 
 ### Opening
 
-Okay, now we have everything done on PulseAudio. Now we are going to ALSA, as something could have gone wrong.
+Okay, now we have everything done on Pipewire. Now we are going to ALSA, as something could have gone wrong.
 
 To open alsamixer, open a terminal and do:
 
@@ -246,7 +238,7 @@ In my example, there are 1 and a "not numbered" devices, but I'm still curious a
 **IMPORTANT!** See that "Capture 1" device haves a red text saying "CAPTURE", right? You see that "Capture" device has no red-colored "Capture" text? This was my fault, It SHOULD SHOW "CAPTURE"! 
 You do this by pressing space bar on "Capture". DON'T FORGET!
 
-When finished, press Esc and you're done! 
+When finished, press Esc.
 
 **12/03/2021 EDIT:** Someone told me that after pressing Esc we need to save the settings to ALSA with:
 
@@ -254,16 +246,16 @@ When finished, press Esc and you're done!
 sudo alsactl store
 ```
 
-If necessary, redo the 3rd step again.
+## Step 3 - Restart pipewire
 
-## Troubleshotting
+**IMPORTANT!** Sometimes Pipewire bugs or doesn't get the audio back again, so you need to restart your computer. That is no problem, as when you restart the computer everything is back. So **if Pipewire bugs, restart your computer.**
 
-#### I followed all the steps until Step 3, and then all audio is gone!
+If everything go fine, when restarting pipewire you should have either audio or no inputs working at all, but at least output audio. All your opened applications should have no sound for now, and you may need to restart them.
 
-First of all, try to start again the Daemon with `pulseaudio -D`
+To restart It:
 
-If your audio is back, but with any problems, continue the guide from Step 4.
+```bash
+systemctl --user restart pipewire
+```
 
-If It shows up an error, please, ask for help. It can be any forum or also me.
-
-If you need the audio for now, and don't mind using the old configuration, delete the `~/.config/pulse/default.pa` file and do `pulseaudio -D` again. It should work
+Then everything is done :)
